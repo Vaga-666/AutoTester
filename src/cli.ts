@@ -6,6 +6,7 @@ import { runMacro } from "./runner/index.js";
 import { type Locator } from "./db/repository.js";
 import fs from "node:fs";
 import path from "node:path";
+import { renderHtmlReport } from "./reporting.js";
 
 const program = new Command();
 
@@ -316,11 +317,6 @@ function escapeXml(value: string): string {
     .replace(/'/g, "&apos;");
 }
 
-function formatLocatorList(locators: Locator[] | undefined): string {
-  if (!locators || locators.length === 0) return "-";
-  return locators.map((l) => formatLocator(l)).join(" | ");
-}
-
 program
   .command("show-report")
   .description("show report by run id")
@@ -354,65 +350,7 @@ program
     }
 
     if (format === "html") {
-      const steps = Array.isArray(report.steps) ? (report.steps as Array<{ order_index: number; action_type: string; status: string; error_message?: string | null; locators?: Locator[]; value?: string | null }>) : [];
-      const rows = steps
-        .map((s) => {
-          const locators = formatLocatorList(s.locators);
-          const value = s.value ?? "";
-          const error = s.error_message ?? "";
-          return `          <tr>
-            <td>${escapeXml(String(s.order_index))}</td>
-            <td>${escapeXml(s.action_type)}</td>
-            <td>${escapeXml(locators)}</td>
-            <td>${escapeXml(value)}</td>
-            <td>${escapeXml(s.status)}</td>
-            <td>${escapeXml(error)}</td>
-          </tr>`;
-        })
-        .join("\n");
-
-      const html = `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>AutoTester Report ${escapeXml(String(report.runId))}</title>
-  <style>
-    body { font-family: Arial, sans-serif; margin: 24px; color: #111; }
-    h1 { margin: 0 0 8px; }
-    .meta { margin: 0 0 16px; color: #555; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { border: 1px solid #ddd; padding: 8px; vertical-align: top; }
-    th { background: #f3f3f3; text-align: left; }
-    .status-pass { color: #0a7b34; font-weight: 600; }
-    .status-fail { color: #b00020; font-weight: 600; }
-    .status-skipped { color: #8a6d3b; font-weight: 600; }
-  </style>
-</head>
-<body>
-  <h1>Run ${escapeXml(String(report.runId))} — ${escapeXml(report.status)}</h1>
-  <p class="meta">Macro: ${escapeXml(String(report.macroName ?? report.macroId))} | Env: ${escapeXml(String(report.envName ?? ""))} | Browser: ${escapeXml(String(report.browser ?? ""))}</p>
-  <p class="meta">Summary: total=${escapeXml(String(report.summary?.total ?? steps.length))}, passed=${escapeXml(String(report.summary?.passed ?? 0))}, failed=${escapeXml(String(report.summary?.failed ?? 0))}, skipped=${escapeXml(String(report.summary?.skipped ?? 0))}</p>
-  <table>
-    <thead>
-      <tr>
-        <th>Order</th>
-        <th>Action</th>
-        <th>Locators</th>
-        <th>Value</th>
-        <th>Status</th>
-        <th>Error</th>
-      </tr>
-    </thead>
-    <tbody>
-${rows}
-    </tbody>
-  </table>
-</body>
-</html>`;
-
-      const htmlPath = path.resolve(process.cwd(), "reports", `run-${runId}.html`);
-      fs.writeFileSync(htmlPath, html, "utf-8");
+      const htmlPath = renderHtmlReport(report, reportPath);
       console.log(`HTML report: ${htmlPath}`);
       return;
     }

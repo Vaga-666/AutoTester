@@ -114,6 +114,18 @@ export class PostgresRepository {
     return res.rows as Array<{ id: number; name: string }>;
   }
 
+  async listRecent(limit = 30): Promise<Array<{ id: number; name: string; base_url: string | null; description: string | null }>> {
+    const res = await this.pool.query("SELECT id, name, base_url, description FROM macros ORDER BY id DESC LIMIT $1", [limit]);
+    return res.rows as Array<{ id: number; name: string; base_url: string | null; description: string | null }>;
+  }
+
+  async getMacroWithDescription(
+    macroId: number
+  ): Promise<{ id: number; name: string; base_url: string | null; description: string | null } | null> {
+    const res = await this.pool.query("SELECT id, name, base_url, description FROM macros WHERE id = $1", [macroId]);
+    return (res.rows[0] as { id: number; name: string; base_url: string | null; description: string | null }) ?? null;
+  }
+
   async createMacro(params: { name: string; description?: string | null; baseUrl?: string | null; createdBy?: string | null }): Promise<number> {
     const res = await this.pool.query(
       "INSERT INTO macros (name, description, base_url, created_by) VALUES ($1, $2, $3, $4) RETURNING id",

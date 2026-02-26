@@ -40,6 +40,18 @@ export class MacroRepository {
     return rows as Array<{ id: number; name: string }>;
   }
 
+  listRecent(limit = 30): Array<{ id: number; name: string; base_url: string | null; description: string | null }> {
+    const rows = this.db
+      .prepare("SELECT id, name, base_url, description FROM macros ORDER BY id DESC LIMIT ?")
+      .all(limit);
+    return rows as Array<{ id: number; name: string; base_url: string | null; description: string | null }>;
+  }
+
+  getMacroWithDescription(macroId: number): { id: number; name: string; base_url: string | null; description: string | null } | null {
+    const row = this.db.prepare("SELECT id, name, base_url, description FROM macros WHERE id = ?").get(macroId);
+    return (row as { id: number; name: string; base_url: string | null; description: string | null }) ?? null;
+  }
+
   createMacro(params: { name: string; description?: string | null; baseUrl?: string | null; createdBy?: string | null }): number {
     const stmt = this.db.prepare(
       "INSERT INTO macros (name, description, base_url, created_by) VALUES (@name, @description, @baseUrl, @createdBy)"

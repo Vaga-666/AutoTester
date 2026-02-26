@@ -6,9 +6,11 @@ let cachedPostgres: PostgresRepository | null = null;
 
 type SqliteRepository = {
   list(): Promise<Array<{ id: number; name: string }>>;
+  listRecent(limit?: number): Promise<Array<{ id: number; name: string; base_url: string | null; description: string | null }>>;
   createMacro(params: { name: string; description?: string | null; baseUrl?: string | null; createdBy?: string | null }): Promise<number>;
   addSteps(macroId: number, steps: Array<{ orderIndex: number; actionType: string; locators: import("./repository.js").Locator[]; value?: string | null }>): Promise<void>;
   getMacro(macroId: number): Promise<{ id: number; name: string; base_url: string | null } | null>;
+  getMacroWithDescription(macroId: number): Promise<{ id: number; name: string; base_url: string | null; description: string | null } | null>;
   renameMacro(params: { macroId: number; name: string }): Promise<boolean>;
   getSteps(macroId: number): Promise<import("./repository.js").MacroStep[]>;
   getAllSteps(macroId: number): Promise<import("./repository.js").MacroStep[]>;
@@ -40,6 +42,9 @@ class SqliteRepositoryWrapper implements SqliteRepository {
   async list(): Promise<Array<{ id: number; name: string }>> {
     return this.inner.list();
   }
+  async listRecent(limit?: number): Promise<Array<{ id: number; name: string; base_url: string | null; description: string | null }>> {
+    return this.inner.listRecent(limit);
+  }
   async createMacro(params: { name: string; description?: string | null; baseUrl?: string | null; createdBy?: string | null }): Promise<number> {
     return this.inner.createMacro(params);
   }
@@ -48,6 +53,9 @@ class SqliteRepositoryWrapper implements SqliteRepository {
   }
   async getMacro(macroId: number): Promise<{ id: number; name: string; base_url: string | null } | null> {
     return this.inner.getMacro(macroId);
+  }
+  async getMacroWithDescription(macroId: number): Promise<{ id: number; name: string; base_url: string | null; description: string | null } | null> {
+    return this.inner.getMacroWithDescription(macroId);
   }
   async renameMacro(params: { macroId: number; name: string }): Promise<boolean> {
     return this.inner.renameMacro(params);

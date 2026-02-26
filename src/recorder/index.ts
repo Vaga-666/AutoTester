@@ -1,6 +1,10 @@
-﻿import { chromium, type Page } from "playwright";
+import { chromium, type Page } from "playwright";
 import { createRepository, getDbProvider } from "../db/factory.js";
 import { type Locator } from "../db/repository.js";
+import fs from "node:fs";
+import path from "node:path";
+import { runMacro } from "../runner/index.js";
+import { findLatestRunIdForMacro, openFileWithSystem, renderHtmlReport } from "../reporting.js";
 
 type RecordedEvent = {
   type: "click" | "input" | "change" | "navigation" | "waitFor" | "assert";
@@ -50,6 +54,30 @@ function isRecordedEventPayload(payload: unknown): payload is RecordedEvent {
   if (!Array.isArray(maybe.locators) || !maybe.locators.every(isLocator)) return false;
   if (!(maybe.value === undefined || maybe.value === null || typeof maybe.value === "string")) return false;
   return true;
+}
+
+function parseMacroMeta(description: string | null): { name?: string; site?: string; tags?: string[] } {
+  if (!description) return {};
+  try {
+    const parsed = JSON.parse(description);
+    const root = parsed && typeof parsed === "object" ? (parsed as { meta?: unknown }).meta ?? parsed : null;
+    if (!root || typeof root !== "object") return {};
+    const meta = root as { name?: unknown; site?: unknown; tags?: unknown };
+    const name = typeof meta.name === "string" ? meta.name : undefined;
+    const site = typeof meta.site === "string" ? meta.site : undefined;
+    const rawTags = Array.isArray(meta.tags)
+      ? meta.tags
+      : typeof meta.tags === "string"
+        ? meta.tags.split(",")
+        : [];
+    const tags = rawTags
+      .map((t) => (typeof t === "string" ? t.trim() : ""))
+      .filter((t) => t.length > 0);
+    const deduped = Array.from(new Set(tags));
+    return { name, site, tags: deduped };
+  } catch {
+    return {};
+  }
 }
 
 export async function recordMacro(options: { url?: string; name?: string }): Promise<void> {
@@ -591,7 +619,16 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
     <div class="label full">Text contains</div>
     <input id="assertTextValue" type="text" placeholder="Text contains" class="full" />
     <button id="assertText" class="full">Assert Text</button>
+    <!-- Saved macros -->
+    <div class="label full">Saved macros</div>
+    <div class="row">
+      <input id="macroSearch" type="text" placeholder="Search by ID/Name/Tags/Base URL" />
+      <button id="refreshMacros">Refresh</button>
+    </div>
+    <div id="macroList" class="full" style="border: 1px solid #2d2f36; border-radius: 6px; overflow: auto; max-height: 220px;"></div>
+    <div id="runStatus" class="status full"></div>
   </div>
+
   <script>
     const send = (cmd) => window.autotesterControl(cmd);
     const status = document.getElementById("status");
@@ -618,6 +655,103 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
     });
     document.getElementById("undo").addEventListener("click", () => send({ type: "undo" }));
   </script>
+  <script>
+    const macroSearch = document.getElementById("macroSearch");
+    const refreshMacros = document.getElementById("refreshMacros");
+    const macroList = document.getElementById("macroList");
+    const runStatus = document.getElementById("runStatus");
+
+    const setRunStatus = (text, color) => {
+      if (!runStatus) return;
+      runStatus.textContent = text;
+      if (color) runStatus.style.color = color;
+    };
+
+    const renderMacros = (items) => {
+      if (!macroList) return;
+      macroList.innerHTML = "";
+      const table = document.createElement("table");
+      table.style.width = "100%";
+      table.style.borderCollapse = "collapse";
+      table.style.fontSize = "12px";
+
+      const head = document.createElement("thead");
+      head.innerHTML =
+        "<tr><th style=\"text-align:left; padding:6px; border-bottom:1px solid #2d2f36;\">ID</th>" +
+        "<th style=\"text-align:left; padding:6px; border-bottom:1px solid #2d2f36;\">Name</th>" +
+        "<th style=\"text-align:left; padding:6px; border-bottom:1px solid #2d2f36;\">Base URL</th>" +
+        "<th style=\"text-align:left; padding:6px; border-bottom:1px solid #2d2f36;\">Tags</th>" +
+        "<th style=\"text-align:left; padding:6px; border-bottom:1px solid #2d2f36;\">Actions</th></tr>";
+      table.appendChild(head);
+
+      const body = document.createElement("tbody");
+      for (const item of items) {
+        const row = document.createElement("tr");
+        const tags = Array.isArray(item.tags) ? item.tags.join(", ") : "";
+        row.innerHTML =
+          "<td style=\"padding:6px; border-bottom:1px solid #2d2f36;\">" +
+          String(item.id) +
+          "</td>" +
+          "<td style=\"padding:6px; border-bottom:1px solid #2d2f36;\">" +
+          (item.name || "") +
+          "</td>" +
+          "<td style=\"padding:6px; border-bottom:1px solid #2d2f36;\">" +
+          (item.baseUrl || "") +
+          "</td>" +
+          "<td style=\"padding:6px; border-bottom:1px solid #2d2f36;\">" +
+          tags +
+          "</td>" +
+          "<td style=\"padding:6px; border-bottom:1px solid #2d2f36;\"></td>";
+        const actionsCell = row.lastChild;
+        const runBtn = document.createElement("button");
+        runBtn.textContent = "Run";
+        runBtn.style.padding = "4px 6px";
+        runBtn.style.marginRight = "6px";
+        runBtn.addEventListener("click", async () => {
+          setRunStatus("Running macro " + item.id + "...", "#f2cc60");
+          const res = await send({ type: "runMacro", macroId: item.id });
+          if (res && res.ok) {
+            const statusText = res.status ? String(res.status) : "UNKNOWN";
+            setRunStatus("Run " + res.runId + " " + statusText, statusText === "FAIL" ? "#f85149" : "#7ee787");
+          } else {
+            setRunStatus(res && res.reason ? String(res.reason) : "Run failed", "#f85149");
+          }
+        });
+        const reportBtn = document.createElement("button");
+        reportBtn.textContent = "Report";
+        reportBtn.style.padding = "4px 6px";
+        reportBtn.addEventListener("click", async () => {
+          const res = await send({ type: "openReport", macroId: item.id });
+          if (res && res.ok) {
+            setRunStatus("Opened report for macro " + item.id, "#7ee787");
+          } else {
+            setRunStatus(res && res.reason ? String(res.reason) : "Report not found", "#f85149");
+          }
+        });
+        if (actionsCell) {
+          actionsCell.appendChild(runBtn);
+          actionsCell.appendChild(reportBtn);
+        }
+        body.appendChild(row);
+      }
+      table.appendChild(body);
+      macroList.appendChild(table);
+    };
+
+    const refreshList = async () => {
+      const query = macroSearch && macroSearch.value ? macroSearch.value.trim() : "";
+      const res = await send({ type: "listMacros", query });
+      if (res && res.ok && Array.isArray(res.items)) {
+        renderMacros(res.items);
+      } else {
+        renderMacros([]);
+      }
+    };
+
+    if (refreshMacros) refreshMacros.addEventListener("click", refreshList);
+    if (macroSearch) macroSearch.addEventListener("input", () => void refreshList());
+    void refreshList();
+  </script>
 </body>
 </html>`;
 
@@ -630,6 +764,86 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
     if (cmd.type === "undo") {
       events.pop();
       return { ok: true };
+    }
+
+    const showAlert = async (message: string) => {
+      await controlPage?.evaluate((msg) => alert(msg), message);
+    };
+
+    if (cmd.type === "listMacros") {
+      const query = typeof cmd.query === "string" ? cmd.query.trim().toLowerCase() : "";
+      const rows = await repo.listRecent(30);
+      let items = rows.map((row) => {
+        const meta = parseMacroMeta(row.description ?? null);
+        const tags = Array.isArray(meta.tags) ? meta.tags : [];
+        const baseUrl = (isNonEmptyString(meta.site) ? meta.site : row.base_url) ?? "";
+        return { id: row.id, name: row.name, baseUrl, tags, description: row.description ?? "" };
+      });
+      if (query) {
+        items = items.filter((item) => {
+          const haystack = `${item.id} ${item.name} ${item.baseUrl} ${item.tags.join(" ")} ${item.description}`.toLowerCase();
+          return haystack.includes(query);
+        });
+      }
+      return { ok: true, items };
+    }
+
+    if (cmd.type === "openReport") {
+      const macroId = Number(cmd.macroId);
+      if (!Number.isFinite(macroId)) {
+        await showAlert("Invalid macro id");
+        return { ok: false, reason: "invalid macroId" };
+      }
+      const runId = findLatestRunIdForMacro(macroId);
+      if (!runId) {
+        await showAlert("No runs found for macro " + macroId);
+        return { ok: false, reason: "no runs" };
+      }
+      const reportPath = path.resolve(process.cwd(), "reports", `run-${runId}.json`);
+      if (!fs.existsSync(reportPath)) {
+        await showAlert("Report not found");
+        return { ok: false, reason: "report not found" };
+      }
+      const report = JSON.parse(fs.readFileSync(reportPath, "utf-8"));
+      const htmlPath = renderHtmlReport(report, reportPath);
+      await openFileWithSystem(htmlPath);
+      return { ok: true, runId };
+    }
+
+    if (cmd.type === "runMacro") {
+      const macroId = Number(cmd.macroId);
+      if (!Number.isFinite(macroId)) {
+        await showAlert("Invalid macro id");
+        return { ok: false, reason: "invalid macroId" };
+      }
+      const macro = await repo.getMacroWithDescription(macroId);
+      if (!macro) {
+        await showAlert("Macro not found");
+        return { ok: false, reason: "not found" };
+      }
+      const meta = parseMacroMeta(macro.description ?? null);
+      const cmdBaseUrl = typeof cmd.baseUrl === "string" ? cmd.baseUrl.trim() : "";
+      const baseUrl = (isNonEmptyString(meta.site) ? meta.site : macro.base_url) ?? (cmdBaseUrl || undefined);
+      if (!isNonEmptyString(baseUrl)) {
+        await showAlert("Missing base URL");
+        return { ok: false, reason: "missing baseUrl" };
+      }
+      await runMacro({ macroId: String(macroId), baseUrl, headless: false });
+      const runId = findLatestRunIdForMacro(macroId);
+      if (!runId) {
+        return { ok: false, reason: "no run found" };
+      }
+      const reportPath = path.resolve(process.cwd(), "reports", `run-${runId}.json`);
+      if (!fs.existsSync(reportPath)) {
+        return { ok: false, reason: "report not found" };
+      }
+      const report = JSON.parse(fs.readFileSync(reportPath, "utf-8"));
+      const status = typeof report.status === "string" ? report.status : "UNKNOWN";
+      if (status === "FAIL") {
+        const htmlPath = renderHtmlReport(report, reportPath);
+        await openFileWithSystem(htmlPath);
+      }
+      return { ok: true, status, runId };
     }
 
     const runOnPage = async (command: { type: string; text?: string }) => {
