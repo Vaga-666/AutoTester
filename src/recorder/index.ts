@@ -619,6 +619,8 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
     <div class="label full">Text contains</div>
     <input id="assertTextValue" type="text" placeholder="Text contains" class="full" />
     <button id="assertText" class="full">Assert Text</button>
+    <div class="label full">Site/Base URL</div>
+    <input id="macroSite" type="text" placeholder="https://example.com" class="full" />
     <!-- Saved macros -->
     <div class="label full">Saved macros</div>
     <div class="row">
@@ -917,6 +919,13 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
 
   await controlPage.setViewportSize({ width: 420, height: 680 });
   await controlPage.setContent(controlHtml);
+  const initialMacroSite = url ?? page.url();
+  if (isNonEmptyString(initialMacroSite)) {
+    await controlPage.evaluate((value) => {
+      const el = document.getElementById("macroSite");
+      if (el instanceof HTMLInputElement) el.value = value;
+    }, initialMacroSite);
+  }
   await controlPage.bringToFront();
   if (debug) {
     page.on("console", (msg) => {
