@@ -823,7 +823,14 @@ export async function recordMacro(options: { url?: string; name?: string }): Pro
       }
       const meta = parseMacroMeta(macro.description ?? null);
       const cmdBaseUrl = typeof cmd.baseUrl === "string" ? cmd.baseUrl.trim() : "";
-      const baseUrl = (isNonEmptyString(meta.site) ? meta.site : macro.base_url) ?? (cmdBaseUrl || undefined);
+      let baseUrl = (isNonEmptyString(meta.site) ? meta.site : macro.base_url) ?? (cmdBaseUrl || undefined);
+      if (!isNonEmptyString(baseUrl)) {
+        const uiBaseUrl = await controlPage?.evaluate(() => {
+          const el = document.getElementById("macroSite");
+          return el instanceof HTMLInputElement ? el.value.trim() : "";
+        });
+        baseUrl = typeof uiBaseUrl === "string" ? uiBaseUrl : baseUrl;
+      }
       if (!isNonEmptyString(baseUrl)) {
         await showAlert("Missing base URL");
         return { ok: false, reason: "missing baseUrl" };
